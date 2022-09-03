@@ -1,0 +1,647 @@
+---
+title: "MA304 Project (Undergraduate)"
+author: "Rareș Lițescu - 1905904"
+date: "14 04 2022"
+output: html_document
+
+---
+
+<style>
+pre code, pre, code {
+  white-space: pre !important;
+  overflow-x: scroll !important;
+  word-break: keep-all !important;
+  word-wrap: initial !important;
+}
+</style>
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+options(width=2500)
+```
+
+<style>
+.math {
+  font-size: small;
+}
+</style>
+
+
+## The aims of the project
+
+The project uses the **37-00049_UOF-P_2016_prepped.csv** dataset taken from https://www.kaggle.com/datasets/center-for-policing-equity/data-science-for-good to analyze the policing data from one particular police department in Dallas, 2016. 
+
+The main goal of the project is to determine whether or not there is evidence for any racist and/or sexist biases within the given police department. Similarly, an analysis will be carried out to determine other statistics that might be relevant, taking into account factors such as years of experience, time and location of the incidents, as well as the the effectiveness of each type of force used by the officers. 
+
+The main topics that will be discussed are:
+
+* Effect of race
+* Effect of gender
+* Effect of years of experience
+* Time and location 
+
+## Getting familiarised with the data
+
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+#if (!require(c("dplyr", "ggplot2","gridExtra", "reshape2", "rgdal", "Rcpp", "sf", "tidyverse","ggmap", "leaflet", "sjmisc"))) install.packages(c("dplyr", "ggplot2","gridExtra", "reshape2", "rgdal", "Rcpp", "sf", "tidyverse","ggmap", "leaflet", "sjmisc"))
+
+library("dplyr")
+library("ggplot2")
+library("gridExtra")
+library("reshape2")
+library("rgdal")
+library("Rcpp")
+library("sf")
+library("tidyverse")
+library("ggmap")
+library("leaflet")
+library("sjmisc")  #for string matching
+```
+
+
+```{r include=FALSE}
+police=read.csv("E:/Proiecte/Data Visualisation/37-00049_UOF-P_2016_prepped.csv", header = TRUE) #load the data
+```
+
+```{r echo=FALSE}
+police=police[2:2384,]
+police[police$SUBJECT_RACE=="American Ind",]$SUBJECT_RACE="American_Indian"
+police[police$OFFICER_RACE=="American Ind",]$OFFICER_RACE="American_Indian"
+```
+
+**Remark:** The first row of the dataset has been removed since it contained a duplicate of the variable names.
+
+```{r echo=FALSE}
+attach(police)
+```
+
+We check the dimensions of the dataset:
+
+```{r echo=FALSE}
+data.frame(Rows = dim(police)[1], Columns=dim(police)[2])
+```
+The first few rows of the dataset look like this:
+```{r echo=FALSE}
+head(police)
+```
+
+A quick inspection suggests that the entries are standardized and that there is no further cleaning of the data required.
+
+## Analysis
+
+### **General information**
+
+The dataset contains `r nrow(police)` incidents. 
+
+Counting the number of unique ID's, there are between `r length(unique(police$SUBJECT_ID))-1` and `r length(unique(police$SUBJECT_ID))-1+147` individual subjects responsible for the `r nrow(police)` incidents. The uncertainty comes from the fact that there are 147 incidents with SUBJECT_ID=0, which could mean between 0 and 147 more unique individuals. 
+
+Similarly, there are `r length(unique(police$OFFICER_ID))` unique officers who worked on the incidents.
+
+#### *What is the gender distribution?*
+
+The graph below shows the gender distribution for both subjects and officers for unique ID's. 
+
+**Remark:** The cases where the subject gender was unknown were left out. This decision is based on the assumption that the data are missing at random, so not including them does not affect the distribution.
+
+<h4 align="center" id="heading">Distribution of unique subjects and officers by gender</h4>
+```{r echo=FALSE, fig.align='center', fig.height=3.5, fig.width=5.3, message=FALSE, warning=FALSE}
+#find genders for unique subject ids
+element=1
+genders=rep("empty", length(unique(police$SUBJECT_ID))-1)
+for (id in unique(police$SUBJECT_ID)[unique(police$SUBJECT_ID)!="0"]){
+  genders[element]=police$SUBJECT_GENDER[police$SUBJECT_ID==id][1]
+  element=element+1
+}
+genders=genders[genders=="Female"|genders=="Male"]
+genders=data.frame(table(genders))
+names(genders)=c("UNIQUE_GENDERS", "FREQUENCY")
+genders$PERCENTAGE=100*genders$FREQUENCY/sum(genders$FREQUENCY)
+genders$PERCENTAGE[genders$PERCENTAGE<15]=NA
+genders$PERCENTAGE[!is.na(genders$PERCENTAGE)]=paste(round(genders$PERCENTAGE[!is.na(genders$PERCENTAGE)],1), "%")
+
+#find genders for officers unique ids
+element=1
+genders_of=rep("empty", length(unique(police$OFFICER_ID)))
+for (id in unique(police$OFFICER_ID)){
+  genders_of[element]=police$OFFICER_GENDER[police$OFFICER_ID==id][1]
+  element=element+1
+}
+genders_of=data.frame(table(genders_of))
+names(genders_of)=c("UNIQUE_GENDERS", "FREQUENCY")
+genders_of$PERCENTAGE=100*genders_of$FREQUENCY/sum(genders_of$FREQUENCY)
+genders_of$PERCENTAGE[genders_of$PERCENTAGE<10]=NA
+genders_of$PERCENTAGE[!is.na(genders_of$PERCENTAGE)]=paste(round(genders_of$PERCENTAGE[!is.na(genders_of$PERCENTAGE)],1), "%")
+
+#plot it
+colors_gender=c(Male="#6FA5EC", Female="#D77099", Unknown = "#2F0A28")
+colors_gender_binary=c(Male="#6FA5EC", Female="#D77099")
+
+```
+
+
+
+
+```{r echo=FALSE, fig.align='center', fig.height=3, fig.width=8, message=FALSE, warning=FALSE}
+
+#isolate the legend, method taken from http://www.sthda.com/english/wiki/wiki.php?id_contents=7930
+plot_legend = ggplot(genders, aes(x="", y=FREQUENCY, fill= UNIQUE_GENDERS))+geom_bar(stat = "identity")+theme_minimal()+coord_flip()+scale_fill_manual(values=c(Male="#6FA5EC", Female="#D77099"))+guides(fill=guide_legend(title="Gender"))
+get_only_legend <- function(plot) {
+  plot_table = ggplot_gtable(ggplot_build(plot))
+  legend_plot = which(sapply(plot_table$grobs, function(x) x$name) == "guide-box")
+  legend = plot_table$grobs[[legend_plot]]
+  return(legend)
+}
+legend1 = get_only_legend(plot_legend)
+
+
+
+plot1= ggplot(genders, aes(x="", y=FREQUENCY, fill= UNIQUE_GENDERS))+geom_bar(stat = "identity")+geom_text(aes(label = PERCENTAGE), position = position_stack(vjust = 0.5))+coord_flip()+theme(plot.title=element_text(hjust=0.5),plot.subtitle=element_text(hjust=0.5))+guides(fill=guide_legend(title="Subject's gender"))+scale_fill_manual(values=c(Male="#6FA5EC", Female="#D77099"))+theme_minimal()+ theme(legend.position="none")+xlab("Subjects")+ylab("")+ theme(axis.title.x=element_blank(),axis.text.x=element_blank(),axis.ticks.x=element_blank(),panel.grid.major = element_blank(),panel.grid.minor = element_blank())
+
+plot2=ggplot(genders_of, aes(x="", y=FREQUENCY, fill= UNIQUE_GENDERS))+geom_bar(stat = "identity")+theme_minimal()+geom_text(aes(label = PERCENTAGE), position = position_stack(vjust = 0.5))+coord_flip()+theme(plot.title=element_text(hjust=0.5),plot.subtitle=element_text(hjust=0.5))+guides(fill=guide_legend(title="Subject's gender"))+scale_fill_manual(values=c(Male="#6FA5EC", Female="#D77099"))+theme_minimal()+ theme(legend.position="none")+xlab("Officers")+ylab("")+ theme(axis.title.x=element_blank(),axis.text.x=element_blank(),axis.ticks.x=element_blank(),panel.grid.major = element_blank(),panel.grid.minor = element_blank())
+
+grid.arrange(arrangeGrob(plot1, plot2, nrow=2),legend1, nrow=1, widths=c(5,1))
+
+```
+
+As we can see from the graph above, both the subjects and the officers are predominantly male. 
+
+#### *What is the racial distribution?*
+ 
+The graph below shows the racial distribution for both the subjects and officers.
+
+<h4 align="center" id="heading">Distribution of unique subjects and officers by race</h4>
+```{r fig.align='center', fig.height=2, fig.width=7, message=FALSE, warning=FALSE, include=FALSE, out.extra='angle=90'}
+#races officers
+
+element=1
+races_of=rep("empty", length(unique(police$OFFICER_ID)))
+for (id in unique(police$OFFICER_ID)){
+  races_of[element]=police$OFFICER_RACE[police$OFFICER_ID==id][1]
+  element=element+1
+}
+races_of=data.frame(table(races_of))
+names(races_of)=c("UNIQUE_RACES", "FREQUENCY")
+races_of$PERCENTAGE=round(100*races_of$FREQUENCY/sum(races_of$FREQUENCY),2)
+races_of$PERCENTAGE[races_of$PERCENTAGE<15]=NA
+races_of$PERCENTAGE[!is.na(races_of$PERCENTAGE)]=paste(races_of$PERCENTAGE[!is.na(races_of$PERCENTAGE)],"%")
+
+#races subjects
+element=1
+races=rep("empty", length(unique(police$SUBJECT_ID))-1)
+for (id in unique(police$SUBJECT_ID)[unique(police$SUBJECT_ID)!="0"]){
+  races[element]=police$SUBJECT_RACE[police$SUBJECT_ID==id][1]
+  element=element+1
+}
+races=data.frame(RACES=races)
+
+race_freq=as.data.frame(table(races$RACES)) #create a dataframe with the frequency of each race
+names(race_freq)=c("race", "frequency")
+race_freq$percentage=round(100*race_freq$frequency/sum(race_freq$frequency),1) #add a column with the percentages
+race_freq$percentage[race_freq$percentage<15]=NA
+race_freq$percentage[!is.na(race_freq$percentage)]=paste(race_freq$percentage[!is.na(race_freq$percentage)], "%", sep="")
+
+colors=c(Black="#BF5756", White="#F6AE2D", Asian = "#FFEB9B", Unknown= "#747474", Hispanic= "#EB7852", Other = "#91B09F", "American Indian" = "#89366A") #define color palette
+```
+
+```{r include=FALSE}
+race_count=as.data.frame(table(races$RACES))
+names(race_count)=c("Subject's Race", "Count")
+race_count$Percentage=round(100*race_count$Count/sum(race_count$Count),2)
+race_count$Percentage=paste(race_count$Percentage, "%")
+race_count
+```
+
+
+```{r echo=FALSE, fig.align='center', fig.height=3, fig.width=8, message=FALSE, warning=FALSE}
+
+
+plot_legend = ggplot(races_of, aes(x="", y=FREQUENCY, fill= UNIQUE_RACES))+geom_bar(stat = "identity")+geom_col(color = "black")+geom_text(aes(label = PERCENTAGE), position = position_stack(vjust = 0.5))+theme_minimal()+theme(plot.title=element_text(hjust=0.5),
+        plot.subtitle=element_text(hjust=0.5))+ scale_fill_manual(values=colors)+guides(fill=guide_legend(title="Race"))+coord_flip()
+
+legend2 = get_only_legend(plot_legend)
+
+
+
+plot1= ggplot(race_freq, aes(fill=race, y=frequency, x="")) + 
+           geom_bar(position="stack", stat="identity")+geom_text(aes(label = percentage), position = position_stack(vjust = 0.5))+theme_minimal()+ scale_fill_manual(values=colors)+coord_flip() + theme(legend.position="none")+xlab("Subjects")+ylab("")+ theme(axis.title.x=element_blank(),axis.text.x=element_blank(),axis.ticks.x=element_blank(),panel.grid.major = element_blank(),panel.grid.minor = element_blank())
+
+plot2=ggplot(races_of, aes(fill=UNIQUE_RACES, y=FREQUENCY, x="")) + 
+           geom_bar(position="stack", stat="identity")+geom_text(aes(label = PERCENTAGE), position = position_stack(vjust = 0.5))+theme_minimal()+ scale_fill_manual(values=colors)+coord_flip() + theme(legend.position="none")+xlab("Officers")+ylab("")+ theme(axis.title.x=element_blank(),axis.text.x=element_blank(),axis.ticks.x=element_blank(),panel.grid.major = element_blank(),panel.grid.minor = element_blank())
+
+
+
+grid.arrange(arrangeGrob(plot1, plot2, nrow=2),legend2, nrow=1, widths=c(5,1))
+```
+**Remark:** The graphs above don't include the rows with SUBJECT_ID=0.
+
+As we can see, there are considerably more black subjects compared to other races. According to external sources (such as https://datausa.io/profile/geo/dallas-tx/#category_race-and-ethnicity), the percentage of black people in Dallas is around 24.3%. This is concerning, since it doesn't match the percentage in our dataset. 
+```{r echo=FALSE, eval=FALSE}
+size=size=length(unique(police$SUBJECT_ID))-1
+expected_proportion=0.243
+observed_count=length(races$RACES[races$RACES=="Black"])
+chisq.test(c(observed_count, size-observed_count),p= c(expected_proportion, 1-expected_proportion))
+```
+To determine if the difference is statistically significant, a one-way chisquared test was employed. It resulted in a p-value of $2.2\cdot 10^{-16}$, which means that at a 0.01 significance level, the difference between the observed frequency of black subjects and the expected frequency of 24.3% is statistically significant.
+
+Since white, black and hispanic people account for the vast majority of the officers and subjects, we will mostly focus on them for the rest of the analysis.
+
+### **Effect of race**
+
+One might try to investigate if the race of the subjects and officers involved has any effect on the outcome of the incident. To do that, we will inspect several statistics.
+
+#### *What races get arrested the most?*
+
+Overall, `r round(100*nrow(police[police$SUBJECT_WAS_ARRESTED=="Yes",])/nrow(police),2)`% of the subjects get arrested. We can further break this statistic down by the subject's race. 
+
+In the table below, we can see the percentages of subjects who get arrested grouped by race.
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+perc_arrested=as.data.frame(cbind(c("White", "Black", "Hispanic"),rep(0,3)))
+names(perc_arrested)=c("Subject's Race", "Arrested")
+i=1
+for (race in c("White", "Black", "Hispanic")){
+  perc_arrested[i,2]=round(100*nrow(police[(police$SUBJECT_RACE==race)&(police$SUBJECT_WAS_ARRESTED=="Yes"),])/nrow(police[police$SUBJECT_RACE==race,]),2)
+  i=i+1
+}
+
+perc_arrested$Arrested=paste(perc_arrested$Arrested,"%")
+perc_arrested
+```
+The data suggests that roughly the same percentage of each race gets arrested. 
+
+\vspace{0.5cm}
+
+#### *Do officers have an affinity for their own race?*
+
+One question that might arise is whether or not officers have an affinity for their own race, which can be seen from which subjects they arrest the most. For example, if white officers have an affinity for their own race, we would expect them to arrest less white subjects. 
+
+So breaking the data down even further, we can inspect the percentage of arrested subjects grouped by officer's race. We try to determine if the race of the officer and that of the subject have any effect on being arrested.
+
+<h4 align="center" id="heading">Percentage of arrested subjects by officer's race</h4>
+```{r echo=FALSE, fig.align='center', fig.height=3.5, fig.width=8, message=FALSE, warning=FALSE, out.extra='angle=90'}
+police2=summarise(group_by(police, OFFICER_RACE), White=100*sum(SUBJECT_RACE=="White"&SUBJECT_WAS_ARRESTED=="Yes")/sum(SUBJECT_RACE=="White"), Black=100*sum(SUBJECT_RACE=="Black"&SUBJECT_WAS_ARRESTED=="Yes")/sum(SUBJECT_RACE=="Black"), Hispanic=100*sum(SUBJECT_RACE=="Hispanic"&SUBJECT_WAS_ARRESTED=="Yes")/sum(SUBJECT_RACE=="Hispanic"))
+
+police2=filter(police2, OFFICER_RACE %in% c("White", "Black", "Hispanic"))
+police2=melt(police2)
+names(police2)=c("OFFICER_RACE", "SUBJECT_RACE", "value")
+ggplot(police2, aes(x = OFFICER_RACE, y = value, fill = SUBJECT_RACE)) + geom_col(position = "dodge") +scale_fill_manual(values=c(Black="#BF5756", White="#F6AE2D", Hispanic= "#EB7852"))+ guides(fill=guide_legend(title="Subject race"))+xlab("Officer race")+ylab("Subjects arrested (%)")+geom_text(aes(label=round(value,2), group=SUBJECT_RACE), position=position_dodge(width=0.9), vjust=-1, hjust=0.5)+theme_bw()+ylim(0, 100)
+```
+The graph above suggests that the officer's race doesn't influence whether or not they arrest a subject based on their race.
+
+### **Effect of gender**
+
+The data shows that `r round(100*nrow(police[police$SUBJECT_GENDER=="Male",])/nrow(police),2)`% (`r nrow(police[police$SUBJECT_GENDER=="Male",])`) of the incidents come from male subjects, while `r round(100*nrow(police[police$SUBJECT_GENDER=="Female",])/nrow(police),2)`% (`r nrow(police[police$SUBJECT_GENDER=="Female",])`) come from female subjects. This asymmetry suggests we might find other interesting information by breaking the data down by gender. 
+
+#### *Which gender gets arrested the most?*
+
+```{r echo=FALSE}
+perc_ar_gender=cbind(c("Male", "Female"), rep(0,2))
+perc_ar_gender[1,2]=round(100*nrow(police[police$SUBJECT_WAS_ARRESTED=="Yes"&police$SUBJECT_GENDER=="Male",])/nrow(police[police$SUBJECT_GENDER=="Male",]),2)
+perc_ar_gender[2,2]=round(100*nrow(police[police$SUBJECT_WAS_ARRESTED=="Yes"&police$SUBJECT_GENDER=="Female",])/nrow(police[police$SUBJECT_GENDER=="Female",]),2)
+perc_ar_gender=as.data.frame(perc_ar_gender)
+names(perc_ar_gender)=c("SUBJECT_GENDER","PERCENTAGE")
+perc_ar_gender$PERCENTAGE=paste(perc_ar_gender$PERCENTAGE, "%")
+perc_ar_gender
+```
+As the table above shows, both female and male subjects get arrested roughly the same amount, percentagewise. 
+
+Similar to how we did in the previous section, we will now check if officers have an affinity for their own gender.
+
+<h4 align="center" id="heading">Subjects arrested grouped by officer gender and subject gender</h4>
+```{r echo=FALSE, fig.align='center', fig.height=3.5, fig.width=7, message=FALSE, warning=FALSE, 'angle=90', out.extra='angle=90'}
+#percentage of subjects arrested by subject gender and officer gender
+police3=summarise(group_by(police, OFFICER_GENDER), Male=100*sum(SUBJECT_GENDER=="Male"&SUBJECT_WAS_ARRESTED=="Yes")/sum(SUBJECT_GENDER=="Male"), Female=100*sum(SUBJECT_GENDER=="Female"&SUBJECT_WAS_ARRESTED=="Yes")/sum(SUBJECT_GENDER=="Female"))
+
+police3=filter(police3, OFFICER_GENDER %in% c("Male", "Female"))
+police3=melt(police3)
+names(police3)=c("OFFICER_GENDER", "SUBJECT_GENDER", "value")
+police3$valuelabel=paste(round(police3$value,2), "%")
+ggplot(police3, aes(x = OFFICER_GENDER, y = value, fill = SUBJECT_GENDER)) + geom_col(position = "dodge") + guides(fill=guide_legend(title="Subject gender"))+xlab("Officer gender")+ylab("Subjects arrested (%)")+theme_bw()+ylim(0, 105)+scale_fill_manual(values=colors_gender_binary)+geom_text(aes(label=valuelabel, group=SUBJECT_GENDER), position=position_dodge(width=0.9), hjust=-0.2, hjust=0.5)+coord_flip()
+```
+
+
+
+
+As seen above, female officers arrest on average more of the subjects compared to male officers. Moreover, while there is no asymmetry for male officers, female officers tend to arrest a higher percentage of males than females. 
+
+**Remark:** It is important to mention that there is a relatively small amount of incidents for some of the categories shown above, so the difference between the officer genders might not be statistically significant. For example, there are only `r nrow(police[police$OFFICER_GENDER=="Female"&SUBJECT_GENDER=="Female"&SUBJECT_WAS_ARRESTED =="Yes",])` incidents in which both the officer and the subject were females and the subject was arrested.
+
+#### *Which genders are more vulnerable/dangerous?*
+
+The data shows that `r round(100*nrow(police[police$OFFICER_INJURY=="Yes",])/nrow(police),2)`% of the incidents end in the officer being injured. Thus, it might be helpful to understand if subjects of a specific gender are more dangerous than the other ones, making the officers get injured more.
+
+<h4 align="center" id="heading">Percentage of officers injured grouped by the gender of the subject</h4>
+```{r echo=FALSE, fig.height=2.7, fig.width=7, fig.align="center"}
+#Officer injury percentage by subject gender
+
+inj_sg=summarise(group_by(police, SUBJECT_GENDER), Percentage=100*sum(OFFICER_INJURY=="Yes")/sum(!is.na(OFFICER_INJURY)))
+inj_sg=filter(inj_sg, SUBJECT_GENDER %in% c("Female","Male"))
+inj_sg$Percentagelabel=paste(round(inj_sg$Percentage,2),"%")
+ggplot(inj_sg, aes(x=SUBJECT_GENDER, y=Percentage, fill=SUBJECT_GENDER))+geom_col()+theme_bw()+xlab("Subject Gender")+ylab("Officers Injured (%)")+ guides(fill=guide_legend(title="Subject gender"))+scale_fill_manual(values=colors_gender_binary)+geom_text(aes(label=Percentagelabel, group=SUBJECT_GENDER), position=position_dodge(width=0.9), hjust=-0.2)+ylim(0,11.4)+coord_flip()
+```
+The graph above shows that the officer is more likely to be injured if the subject is a male. 
+
+Similarly, we can check if officers of a specific gender are more vulnerable to getting injured.
+
+<h4 align="center" id="heading">Percentage of officers injured grouped by officer's gender</h4>
+```{r echo=FALSE, fig.height=2.7, fig.width=7,fig.align="center"}
+#Officer hospitalization percentage by officer gender
+
+inj_og=summarise(group_by(police, OFFICER_GENDER), Percentage=100*sum(OFFICER_INJURY=="Yes")/sum(!is.na(OFFICER_INJURY)))
+inj_og$Percentagelabel=paste(round(inj_og$Percentage,2), "%")
+
+ggplot(inj_og, aes(x=OFFICER_GENDER, y=Percentage, fill=OFFICER_GENDER))+geom_col()+theme_bw()+xlab("Officer Gender")+ylab("Officers Injured (%)")+ guides(fill=guide_legend(title="Officer gender"))+scale_fill_manual(values=colors_gender_binary)+ylim(0,15)+geom_text(aes(label=Percentagelabel, group=OFFICER_GENDER), position=position_dodge(width=0.9), hjust=-0.2)+coord_flip()
+
+```
+As seen above, female officers seem to get injured more often than male officers. 
+
+### **Effect of years of experience**
+```{r message=FALSE, warning=FALSE, include=FALSE}
+#unique years of experience
+element=1
+unique_yoe=rep(0, length(unique(police$OFFICER_ID)))
+for (id in unique(police$OFFICER_ID)){
+  unique_yoe[element]=as.numeric(police$OFFICER_YEARS_ON_FORCE[police$OFFICER_ID==id][1])
+  element=element+1
+}
+unique_yoe=data.frame(UNIQUE_YEARS=as.numeric(unique_yoe))
+
+```
+The data shows that officers have on average `r round(mean(unique_yoe$UNIQUE_YEARS),1)` years of experience, with a median value of `r median(unique_yoe$UNIQUE_YEARS)` years. The graph below shows a box plot for the distribution of years of experience.
+
+<h4 align="center" id="heading">Box plot for years of experience</h4>
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=3, fig.width=7,fig.align="center"}
+#mean median and boxplot for officers years on force
+ggplot(unique_yoe, aes(y=UNIQUE_YEARS))+geom_boxplot(fill="#EDE7D9")+theme_bw()+xlab("")+ylab("Years of experience")+theme(axis.ticks.y = element_blank(), axis.text.y = element_blank())+coord_flip()+scale_y_continuous(breaks = round(seq(0, max(unique_yoe$UNIQUE_YEARS), by = 2),1))
+
+
+```
+
+As shown above, data suggests that the distribution is skewed to the right, which suggests a higher proportion of "younger" and relatively less-experienced officers than those with many years of experience. 
+
+#### *Do less experienced officers get injured more often than those with more experience?*
+
+Since there is such a high range of values, the previous graph raises the question of whether the years of experience affect the outcome of the incident. One metric we can inspect is the injury rate, grouped by how many years of experience the officer has. To check if there is any trend, linear regression was used and the regression line was plotted along with the graph.
+
+<h4 align="center" id="heading">Percentage of officers injured by years of experience, with regression line</h4>
+```{r echo=FALSE, fig.align='center', fig.height=4, fig.width=8, message=FALSE, warning=FALSE}
+#percentage of injured officers based on their years on force
+inj_by_years=summarise(group_by(police, as.numeric(OFFICER_YEARS_ON_FORCE)), perc=round(100*sum(OFFICER_INJURY=="Yes")/sum(!is.na(OFFICER_INJURY)),2), count= sum(OFFICER_INJURY=="Yes"), total=sum(!is.na(OFFICER_INJURY)), hospitalized=100*sum(OFFICER_HOSPITALIZATION=="Yes")/sum(!is.na(OFFICER_INJURY)))
+names(inj_by_years)=c("OFFICER_YEARS_ON_FORCE", "Percentage", "Count", "Total", "Hospitalized")
+inj_by_years$OFFICER_YEARS_ON_FORCE=as.numeric(inj_by_years$OFFICER_YEARS_ON_FORCE)
+inj_by_years=inj_by_years[order(inj_by_years$OFFICER_YEARS_ON_FORCE),]
+
+ggplot(inj_by_years, aes(x=OFFICER_YEARS_ON_FORCE,y=Percentage+0.05 ))+geom_col(fill="#C53F4D")+scale_x_continuous(breaks = round(seq(min(inj_by_years$OFFICER_YEARS_ON_FORCE), max(inj_by_years$OFFICER_YEARS_ON_FORCE), by = 1),1)) + scale_y_continuous(breaks = round(seq(min(inj_by_years$Percentage), max(inj_by_years$Percentage), by = 2),1))+theme_bw()+xlab("Years of experience")+ylab("Injured Officers (%)")+geom_smooth(method = "lm", se = FALSE, colour="Black", size=1.2)
+
+
+#100*nrow(police[police$OFFICER_YEARS_ON_FORCE=="36"&police$OFFICER_INJURY=="Yes",])/nrow(police[police$OFFICER_YEARS_ON_FORCE=="36",])
+```
+The graph above suggests that officers with more experience tend to get injured more often. One explanation for this would be that officers with more experience are also older, which might come with a decrease in reaction times or agility. Similarly, it could be caused by assigning officers with more experience to more difficult cases. 
+
+```{r include=FALSE}
+summary(lm(inj_by_years$Percentage ~ as.numeric(inj_by_years$OFFICER_YEARS_ON_FORCE)))
+```
+
+The regression line has equation $y=7.56+0.2x$, which means that for every additional year on force, an officer's risk of being injured after an incident increases by 0.2%. A more in-depth analysis suggests that the intercept (7.56) is statistically significant at a 0.05 significance. However, the slope (0.2) is only significant at a 0.1 significance level, so the upward trend is only significant at a 0.1 level. 
+
+
+
+```{r include=FALSE}
+threshold_years=6
+
+100*nrow(police[as.numeric(police$OFFICER_YEARS_ON_FORCE)<threshold_years&police$OFFICER_INJURY=="Yes",])/nrow(police[as.numeric(police$OFFICER_YEARS_ON_FORCE)<threshold_years,])
+
+100*nrow(police[as.numeric(police$OFFICER_YEARS_ON_FORCE)>=threshold_years&police$OFFICER_INJURY=="Yes",])/nrow(police[as.numeric(police$OFFICER_YEARS_ON_FORCE)>=threshold_years,])
+
+nrow(police[as.numeric(police$OFFICER_YEARS_ON_FORCE)>=threshold_years,])
+```
+### **Time and location**
+
+We will now investigate the time and location of the incidents, trying to examine if there is any interesting pattern. 
+
+#### *What are the hours of the day when incidents happen most frequently?*
+
+The graph below shows the amount of incidents for each time of the day.
+
+<h4 align="center" id="heading">Number of incidents  per hour of the day</h4>
+```{r echo=FALSE, fig.align="center", fig.height=5, fig.width=8, message=FALSE, warning=FALSE}
+#histogram for time of the day
+time= as.data.frame(t(as.data.frame(strsplit(police$INCIDENT_TIME,":")))) #make dataframe by splitting INCIDENT_TIME column by ":"
+time$V4=rep(0, nrow(police))  #insert an empty column
+
+#change columns to numeric
+time$V1=as.numeric(time$V1)   
+time$V2=as.numeric(time$V2)
+
+#compute number of minutes from midnight
+for (i in 1:nrow(police)){
+    time[i,4]=time[i,1]*60+time[i,2]
+    if (time[i,3]=="00 PM"){
+      time[i,4]=time[i,4]+12*60
+    }
+  
+}
+time$SUBJECT_RACE=police$SUBJECT_RACE
+time=time[complete.cases(time),]  #exclude cases with NA's
+
+ggplot(time, aes(x=V4))+geom_histogram(bins=55, fill= "#C53F4D", col="Black" )+theme_bw()+xlab("Hour of the day")+ylab("Number of incidents")+scale_x_continuous(labels=c("12 AM","2 AM", "4 AM", "6 AM", "8 AM", "10 AM", "12 PM","2 PM", "4 PM", "6 PM", "8 PM", "10 PM", "12 AM" ), breaks=seq(0,1440,2*60), limits=c(0,1440))+scale_fill_manual(values=c(Black="#BF5756", White="#F6AE2D", Hispanic= "#EB7852", Other= "#7F7F7F"))+guides(fill=guide_legend(title="Subject race"))
+
+
+```
+As we can see, the number of incidents is the lowest around 7 AM and peaks in the evening. 
+
+#### *Which regions of Dallas are the most dangerous? Is there any connection to the race?*
+ 
+Below, we can see a map of the incidents. Each red dot can be clicked to see a summary of the incident.
+
+<h4 align="center" id="heading">Map of the incidents</h4>
+```{r echo=FALSE, fig.align="center"}
+#map with each incident + summary
+par(mar = c(4, 4, .1, .1))
+mapdata=filter(police, (LOCATION_LATITUDE!="")&(LOCATION_LONGITUDE!=""))
+mapdata$LOCATION_LATITUDE=as.numeric(mapdata$LOCATION_LATITUDE)
+mapdata$LOCATION_LONGITUDE=as.numeric(mapdata$LOCATION_LONGITUDE)
+#spatialdata= SpatialPointsDataFrame(mapdata[,c(1,2)], mapdata[,c(1,2)])
+map=addProviderTiles(addCircleMarkers(addTiles(leaflet(mapdata)), fillColor = "#EE3B3B",fillOpacity = 1, stroke = F, radius = 3, lng =~LOCATION_LONGITUDE, lat = ~LOCATION_LATITUDE, popup = ~paste("<h3>Summary of the incident</h3>","<b>Incident Time:</b>",INCIDENT_TIME,"<br><b>Subject Race:</b>", SUBJECT_RACE,"<br><b>Subject Gender:</b>", SUBJECT_GENDER, "<br><b>Subject Offense:</b>", SUBJECT_OFFENSE,"<br><b>Officer Injured:</b>", OFFICER_INJURY)), "OpenStreetMap.HOT" )
+map
+```
+
+The graph below shows the number of incidents for each region of Dallas, broken down by subject race.
+
+<h4 align="center" id="heading">Barplot for the number of incidents for each region of the city with the racial distribution </h4>
+```{r echo=FALSE, fig.align= "center", fig.height=4.5}
+
+police4=within(police, DIVISION <- factor(DIVISION, levels=names(sort(table(DIVISION), decreasing=TRUE))))
+ggplot(police4, aes(x=DIVISION))+geom_bar(aes(fill= SUBJECT_RACE))+coord_flip()+xlab("Region of the city")+ylab("Number of incidents")+geom_text(stat='count', aes(label=..count..), hjust=-0.5)+theme_bw()+ylim(0,600)+scale_fill_manual(values=c(Black="#BF5756", White="#F6AE2D", Hispanic= "#EB7852", Other= "#7F7F7F"))+guides(fill=guide_legend("Subject Race"))
+```
+The racial distribution shows that there exist some differences between regions. One of those that stand out is the south central region, where the vast majority of the incidents come from black subjects. A quick inspection suggests that there is no connection between the race distribution of the region and the number of incidents.  
+
+Moreover, data shows that the region of the city where most incidents happen is the central region. However, it is important to mention that this might not necessarily reflect the actual frequency of crimes in each area. 
+
+For example, if the police department is located in the central area, there will be more officers around, and thus more subjects will be caught in that region. Similarly, there might be other police departments responsible for other parts of the city, so the graph above might not capture the full picture. 
+
+### Other statistics
+
+#### *What is the distribution for the number of incidents per subject?*
+```{r include=FALSE}
+for (i in 1:nrow(police)){
+  if (police[i, 14]=="NULL"){
+    police[i,14]="Unknown"
+  }
+}
+```
+ 
+On average, each individual subject is responsible for `r round(mean(table(factor(police$SUBJECT_ID))[2:length(table(factor(police$SUBJECT_ID)))]),2)` incidents.
+
+The graph below shows the distribution for the number of incidents per individual subject.
+
+<h4 align="center" id="heading">Number of incidents per individual</h4>
+```{r echo=FALSE, fig.height=4, fig.width=6.1, fig.align='center'}
+n_incidents=data.frame(table(police$SUBJECT_ID)[2:length(table(factor(police$SUBJECT_ID)))])
+names(n_incidents)=c("SUBJECT_ID", "FREQUENCY")
+
+ggplot(n_incidents, aes(x=factor(FREQUENCY)))+geom_bar(fill="#C53F4D")+theme_bw()+xlab("Number of incidents")+ylab("Number of subjects")
+```
+
+The distribution is skewed to the right, suggesting that there is a small amount of subjects responsible for more than two incidents relative to those responsible for only one or two. In fact, `r round(100*sum(n_incidents$FREQUENCY[n_incidents$FREQUENCY<=2])/sum(n_incidents$FREQUENCY),1)`% of the incidents come from subjects who are responsible for less than three incidents.
+
+#### *What are the most frequent incident reasons?*
+
+Understanding the most common crimes/incident reasons helps us form a better picture of the overall situation. This might also help the police department focus on the training required to tackle the situations that happen most often. 
+
+<h4 align="center" id="heading">Incidence of each offense type</h4>
+```{r echo=FALSE, fig.align="center", fig.height=6, fig.width=9, message=FALSE, warning=FALSE}
+offences= as.data.frame(unlist(strsplit(police$SUBJECT_OFFENSE, ",\\s*")))
+names(offences)=c("OFFENCES")
+offences=within(offences, OFFENCES <- factor(OFFENCES, levels=names(sort(table(OFFENCES), decreasing=TRUE))))
+offences$Freq=rep(0,nrow(offences))
+table=as.data.frame(table(unlist(strsplit(police$SUBJECT_OFFENSE, ",\\s*"))))
+rownames(table)=table$Var1
+for (i in 1:nrow(offences)){
+  offences[i,2]=table[as.character(offences[i,1]),2]
+}
+#ggplot(offences, aes(x=OFFENCES,fill=Freq ))+geom_bar()+theme_bw()+theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+scale_fill_viridis_c(begin = 0.2,end=0.85,option = "inferno")+theme(legend.position = "none")+xlab("Offense")+ylab("Number of incidents")
+
+ggplot(offences, aes(x=OFFENCES))+geom_bar(fill="#C53F4D")+theme_bw()+theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+theme(legend.position = "none")+xlab("Offense")+ylab("Number of incidents")
+```
+
+As the graph above shows, the most common offenses are not the most serious one. Meanwhile, the most serious ones, such as robbery, murder and sexual assault are relatively less common.
+```{r include=FALSE}
+#confirm substring for each element of a vector, since str_contains doesn't work for vectors
+is.substring = function(vect, substr) {
+  x=rep(FALSE, length(vect))
+  for (i in 1:length(vect)){
+    x[i]=str_contains(vect[i], substr)
+  }
+  return(x)
+}
+
+#same as above but for multiple substrings
+multiple.substring = function(vect, list){
+  x=rep(FALSE, length(vect))
+  for (i in list){
+    x=x|is.substring(vect, i)
+    
+  }
+  return(x)
+}
+```
+
+```{r fig.align='center', fig.height=3.5, fig.width=8, message=FALSE, warning=FALSE, include=FALSE}
+#years on force per subject offense
+subset1=police[multiple.substring(police$SUBJECT_OFFENSE, c("APOWW", "Evading Arrest", "Other Misdemeanor Arrest", "DWI", "Resisting Search and Transport", "Other Felony Arrest", "No Arrest", "Warrant/Hold", "Public Intoxication", "Escape", "Disorderly Conduct","DWLS", "Manifest/Drug Sales", "Traffic Violation", "Curfew Violation", "Pedestrian In Roadway", "Other Agency Arrest", "Prostitution", "Sleeping in Public", "City Ordinance Violation", "DUI")),]
+subset2=police[!multiple.substring(police$SUBJECT_OFFENSE, c("APOWW", "Evading Arrest", "Other Misdemeanor Arrest", "DWI", "Resisting Search and Transport", "Other Felony Arrest", "No Arrest", "Warrant/Hold", "Public Intoxication", "Escape", "Disorderly Conduct","DWLS", "Manifest/Drug Sales", "Traffic Violation", "Curfew Violation", "Pedestrian In Roadway", "Other Agency Arrest", "Prostitution", "Sleeping in Public", "City Ordinance Violation", "DUI")),]
+mean(as.numeric(subset1$OFFICER_YEARS_ON_FORCE))
+mean(as.numeric(subset2$OFFICER_YEARS_ON_FORCE))
+
+```
+
+#### *What are the most frequent types of force used?*
+
+The graph below shows the number of times each type of force was use, as well as the percentage of times it was effective. Here, the color represents the effectiveness.
+
+<h4 align="center" id="heading">Number and effectiveness of each force type</h4>
+```{r echo=FALSE, fig.align="center", fig.height=5.5, fig.width=9, message=FALSE, warning=FALSE}
+#unique force types
+effective=unlist(str_split(police$FORCE_EFFECTIVE, ","))
+force_type=vector()
+for (j in 1:nrow(police)){
+  for (i in 36:45){
+    if (police[j,i]!=""){
+      force_type=rbind(force_type, police[j,i])
+    }
+  }
+}
+force = data.frame(FORCE_TYPE = force_type, FORCE_EFFECTIVE = effective)
+unique_forces=data.frame(UNIQUE_FORCE=unique(force$FORCE_TYPE))
+rownames(unique_forces)=unique(force$FORCE_TYPE)
+unique_forces$FREQUENCY=rep("empty",nrow(unique_forces))
+i=1
+for (type in unique(force$FORCE_TYPE)){
+  unique_forces[i,2]=nrow(force[force$FORCE_TYPE==type,])
+  i=i+1
+}
+unique_forces$EFFECTIVE=rep("empty",nrow(unique_forces))
+i=1
+for (type in unique(force$FORCE_TYPE)){
+  unique_forces[i,3]=round(100*nrow(force[force$FORCE_TYPE==type&force$FORCE_EFFECTIVE==" Yes",])/nrow(force[force$FORCE_TYPE==type,]),1)
+  i=i+1
+}
+
+force$FREQUENCY=rep("empty", nrow(force))
+for (i in 1:nrow(force)){
+  force[i,3]=unique_forces[force[i,1],2]
+}
+
+
+force$EFFECTIVE=rep(0, nrow(force))
+for (i in 1:nrow(force)){
+  force[i,4]=unique_forces[force[i,1],3]
+}
+force$FREQUENCY=as.numeric(force$FREQUENCY)
+force$EFFECTIVE=as.numeric(force$EFFECTIVE)
+unique_forces$FREQUENCY=as.numeric(unique_forces$FREQUENCY)
+force= within(force, FORCE_TYPE <- factor(FORCE_TYPE, levels=names(sort(table(FORCE_TYPE), decreasing=TRUE))))
+
+ggplot(force, aes(x=FORCE_TYPE, fill=EFFECTIVE ))+geom_bar()+theme_bw()+theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+xlab("Offense")+ylab("Number of times used")+scale_fill_viridis_c(begin = 0.2,end=0.9,option = "inferno")+guides(fill=guide_colourbar("Effectiveness (%)"))
+```
+
+The data shows that the most common type of force is the verbal command, which accounts for `r round(100*unique_forces["Verbal Command",2]/sum(unique_forces$FREQUENCY),1)`% of all forces used. However, it is also the least effective one, with an effectiveness of only `r unique_forces["Verbal Command", 3]`%. Meanwhile, the second most-used type of force, holding the suspect down, is effective in `r unique_forces["Held Suspect Down", 3]`% of the cases.
+
+```{r eval=FALSE, include=FALSE}
+#not used
+description=summarise(group_by(police, SUBJECT_DESCRIPTION), FREQUENCY = sum(!is.na(SUBJECT_DESCRIPTION)) ,ARRESTED = round(100*sum(SUBJECT_WAS_ARRESTED=="Yes")/sum(!is.na(SUBJECT_WAS_ARRESTED))),1)
+description=description[order(description$FREQUENCY),]
+ggplot(description, aes(x="", y=FREQUENCY ,fill= SUBJECT_DESCRIPTION))+geom_col(color="Black")+theme_bw()
+```
+
+## Conclusions
+
+The data suggests there is no evidence for racism. This means that officers do not have an affinity for any race. Similarly, the race of the officers does not affect the likelihood of arresting specific subjects. However, there is an unusually large percentage of black subjects, which does not match the expected distribution of the population. 
+
+Analyzing the data based on gender, there is very limited evidence for sexism. The term "limited" is used as a consequence of the relatively small amount of female officers and subjects, which makes the statistical significance of the findings questionable.
+
+Moreover, gender seems to play a minor role in the outcome of the incidents, data suggesting that male subjects are on average more dangerous than females subjects, injuring the officers more often. Similarly, female officers are more vulnerable to being injured than male officers.
+
+Officers are on average more likely to get injured after an incident the more experience they have, the risk increasing by 0.2% for every additional year (at a 0.1 significance level).
+
+In addition to that, findings show that the most common crimes are not the most serious ones.
+
+The geographical and chronological data shows that most incidents happen in the central region of Dallas, most of them taking place in the evening. 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
